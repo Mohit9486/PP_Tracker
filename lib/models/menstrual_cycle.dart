@@ -1,270 +1,213 @@
 import 'dart:math';
+import 'package:pp_tracker/models/cycle_phase.dart';
 
-enum CyclePhaseType {
-  menstrual,
-  follicular,
-  fertile,
-  luteal;
-
-  String toName() => name[0].toUpperCase() + name.substring(1);
+/// How a particular calendar day relates to the cycle. This is the richer,
+/// UI-facing classification (distinct from the four biological [CyclePhase]s)
+/// and is what the calendar paints.
+enum DayMarker {
+  period, // confirmed/logged or predicted bleeding day
+  predictedPeriod, // future predicted bleeding
+  fertileWindow, // elevated fertility
+  ovulation, // peak fertility day
+  pms, // late luteal, symptom-prone days before period
+  normal,
 }
 
-class CycleDefaults {
-  static const int defaultCycleLength = 28;
-  static const int defaultPeriodLength = 5;
-  static const int lutealPhaseLength = 14;
-  static const int fertileWindowDays = 6;
-}
+/// A descriptor for a single day within the cycle model.
+class CycleDayInfo {
+  final DateTime date;
+  final int cycleDay; // 1-based day within the current cycle
+  final CyclePhase phase;
+  final DayMarker marker;
+  final int pregnancyChance; // 0–100
 
-class CyclePhase {
-  final CyclePhaseType type;
-  final DateTime startDate;
-  final DateTime endDate;
-  final List<String> symptoms;
-  final List<String> selfCareTips;
-
-  CyclePhase({
-    required this.type,
-    required this.startDate,
-    required this.endDate,
-    required this.symptoms,
-    required this.selfCareTips,
-  });
-
-  int get durationInDays => endDate.difference(startDate).inDays + 1;
-}
-
-class CycleDay {
-  final Duration date;
-  final CyclePhaseType phase;
-  final int pregnancyChance; // 0–100%
-  final List<String> symptoms;
-  final List<String> selfCareTips;
-  final List<String> emojis;
-
-  CycleDay({
+  const CycleDayInfo({
     required this.date,
+    required this.cycleDay,
     required this.phase,
+    required this.marker,
     required this.pregnancyChance,
-    required this.symptoms,
-    required this.selfCareTips,
-    required this.emojis,
+  });
+}
+
+/// A single recorded (historical or current) cycle.
+class CycleRecord {
+  final DateTime startDate; // first day of bleeding
+  final int cycleLength; // days until next period starts
+  final int periodLength; // days of bleeding
+
+  const CycleRecord({
+    required this.startDate,
+    required this.cycleLength,
+    required this.periodLength,
   });
 
-  @override
-  String toString() {
-    return 'CycleDay(date: $date, phase: $phase, pregnancyChance: $pregnancyChance, symptoms: $symptoms, selfCareTips: $selfCareTips)';
+  DateTime get endDate => _atMidnight(startDate).add(Duration(days: cycleLength - 1));
+  DateTime get nextStart => _atMidnight(startDate).add(Duration(days: cycleLength));
+
+  bool contains(DateTime day) {
+    final d = _atMidnight(day);
+    return !d.isBefore(_atMidnight(startDate)) && !d.isAfter(endDate);
   }
 }
 
+DateTime _atMidnight(DateTime d) => DateTime(d.year, d.month, d.day);
+
+/// The cycle engine.
+///
+/// Given the current cycle parameters (and, optionally, a history of past
+/// cycles for averaging) it derives phases, day markers, fertility and
+/// predictions. It is pure/stateless — [UserModel] owns the data and asks
+/// this engine to compute.
 class MenstrualCycle {
+  static const int defaultCycleLength = 28;
+  static const int defaultPeriodLength = 5;
+  static const int lutealPhaseLength = 14; // days from ovulation to next period
+  static const int fertileWindowBefore = 5; // sperm survival window
+  static const int pmsWindow = 4; // days before period flagged as PMS
+
   final DateTime cycleStartDate;
   final int cycleLength;
   final int periodLength;
+  final List<CycleRecord> history;
 
   MenstrualCycle({
-    required this.cycleStartDate,
-    this.cycleLength = CycleDefaults.defaultCycleLength,
-    this.periodLength = CycleDefaults.defaultPeriodLength,
-  }) {
-    if (cycleLength < 21 || cycleLength > 40) {
-      throw ArgumentError('cycleLength must be between 21 and 40 days');
-    }
-    if (periodLength <= 0 || periodLength >= cycleLength) {
-      throw ArgumentError('Invalid periodLength');
-    }
+    required DateTime cycleStartDate,
+    this.cycleLength = defaultCycleLength,
+    this.periodLength = defaultPeriodLength,
+    this.history = const [],
+  }) : cycleStartDate = _atMidnight(cycleStartDate);
+
+  // ---- Core anchors -------------------------------------------------------
+
+  int get ovulationDayOfCycle => cycleLength - lutealPhaseLength; // 1-based
+  DateTime get currentCycleStart => _cycleStartFor(DateTime.now());
+  DateTime get nextPeriodDate => currentCycleStart.add(Duration(days: cycleLength));
+  DateTime get ovulationDate =>
+      currentCycleStart.add(Duration(days: ovulationDayOfCycle - 1));
+
+  DateTime get fertileWindowStart =>
+      ovulationDate.subtract(const Duration(days: fertileWindowBefore));
+  DateTime get fertileWindowEnd => ovulationDate.add(const Duration(days: 1));
+
+  int get currentCycleDay => cycleDayFor(DateTime.now());
+  CyclePhase get currentPhase => phaseFor(DateTime.now());
+
+  int get daysUntilNextPeriod =>
+      nextPeriodDate.difference(_atMidnight(DateTime.now())).inDays;
+
+  // ---- Per-day computations ----------------------------------------------
+
+  /// Start date of the cycle that [date] falls within (handles repeats both
+  /// forwards and backwards from the anchor).
+  DateTime _cycleStartFor(DateTime date) {
+    final d = _atMidnight(date);
+    final diff = d.difference(cycleStartDate).inDays;
+    final offset = (diff / cycleLength).floor();
+    return cycleStartDate.add(Duration(days: offset * cycleLength));
   }
 
-  // ---------- CORE CYCLE CALCULATION ----------
+  int cycleDayFor(DateTime date) {
+    final start = _cycleStartFor(date);
+    return _atMidnight(date).difference(start).inDays + 1;
+  }
 
-  DateTime _currentCycleStart(DateTime date) {
-    final totalDays = date.difference(cycleStartDate).inDays;
+  CyclePhase phaseFor(DateTime date) {
+    final day = cycleDayFor(date);
+    final ov = ovulationDayOfCycle;
+    if (day <= periodLength) return CyclePhase.menstrual;
+    if (day < ov - fertileWindowBefore) return CyclePhase.follicular;
+    if (day <= ov + 1) return CyclePhase.ovulation;
+    return CyclePhase.luteal;
+  }
 
-    if (totalDays < 0) {
-      throw ArgumentError('Date is before cycle start');
+  DayMarker markerFor(DateTime date) {
+    final d = _atMidnight(date);
+    final day = cycleDayFor(d);
+    final today = _atMidnight(DateTime.now());
+    final ov = ovulationDayOfCycle;
+
+    // Bleeding days
+    if (day <= periodLength) {
+      return d.isAfter(today) ? DayMarker.predictedPeriod : DayMarker.period;
     }
-
-    final cycleOffset = totalDays ~/ cycleLength;
-    return cycleStartDate.add(Duration(days: cycleOffset * cycleLength));
-  }
-
-  int _cycleDayNumber(DateTime date) {
-    final totalDays = date.difference(cycleStartDate).inDays;
-
-    if (totalDays < 0) {
-      throw ArgumentError('Date is before cycle start');
+    // Ovulation peak
+    if (day == ov) return DayMarker.ovulation;
+    // Fertile window
+    if (day >= ov - fertileWindowBefore && day <= ov + 1) {
+      return DayMarker.fertileWindow;
     }
-
-    return (totalDays % cycleLength) + 1;
+    // PMS — the last few luteal days before the next period
+    if (day > cycleLength - pmsWindow) return DayMarker.pms;
+    return DayMarker.normal;
   }
 
-  DateTime get nextCycleStartDate => cycleStartDate.add(Duration(days: cycleLength));
-
-  DateTime get cycleEndDate => cycleStartDate.add(Duration(days: cycleLength - 1));
-
-  /// Fertile day (ovulation day) relative to the cycle of [date]
-  DateTime _fertileDateFor(DateTime date) {
-    final start = _currentCycleStart(date);
-    return start.add(Duration(days: cycleLength - CycleDefaults.lutealPhaseLength));
-  }
-
-  // ---------- FERTILITY CALCULATION ----------
-
-  DateTime nextFertileDay({required DateTime fromDate}) {
-    final normalizedFrom = DateTime(fromDate.year, fromDate.month, fromDate.day);
-
-    final totalDays = normalizedFrom.difference(cycleStartDate).inDays;
-
-    if (totalDays < 0) {
-      return cycleStartDate.add(Duration(days: cycleLength - 14));
+  /// Probability of conception for [date], a smooth bell around ovulation.
+  int pregnancyChanceFor(DateTime date) {
+    final day = cycleDayFor(date);
+    final distance = (day - ovulationDayOfCycle).abs();
+    const curve = {0: 33, 1: 27, 2: 21, 3: 14, 4: 9, 5: 4};
+    if (day < ovulationDayOfCycle - fertileWindowBefore ||
+        day > ovulationDayOfCycle + 1) {
+      return distance <= 5 ? (curve[distance] ?? 0) : 0;
     }
-
-    final currentCycleOffset = totalDays % cycleLength;
-    final ovulationDayOffset = cycleLength - 14; // zero-based offset
-
-    if (currentCycleOffset <= ovulationDayOffset) {
-      // Ovulation is still ahead in this cycle
-      final daysUntilOvulation = ovulationDayOffset - currentCycleOffset;
-
-      return normalizedFrom.add(Duration(days: daysUntilOvulation));
-    } else {
-      // Ovulation already passed, move to next cycle
-      final daysUntilNextCycle = cycleLength - currentCycleOffset;
-
-      return normalizedFrom.add(Duration(days: daysUntilNextCycle + ovulationDayOffset));
-    }
+    return curve[distance] ?? 2;
   }
 
-  int fertilityProbability({required DateTime date}) {
-    final day = _cycleDayNumber(date);
-    final ovulationDay = cycleLength - CycleDefaults.lutealPhaseLength;
-
-    final distance = (day - ovulationDay).abs();
-
-    if (distance > 5) return 0;
-
-    const probabilities = {0: 35, 1: 30, 2: 20, 3: 10, 4: 5, 5: 2};
-
-    return probabilities[distance] ?? 0;
-  }
-
-  int currentPhaseNo(CyclePhaseType phase) => CyclePhaseType.values.indexOf(phase);
-
-  // ---------- DAILY BREAKDOWN ----------
-
-  CycleDay calculateCycleForToday(DateTime today) {
-    final duration = today.difference(cycleStartDate);
-    final phase = _resolvePhase(today);
-    final chance = fertilityProbability(date: today);
-
-    return CycleDay(
-      date: duration,
-      phase: phase,
-      pregnancyChance: chance,
-      symptoms: _symptomsForPhase(phase),
-      selfCareTips: _selfCareForPhase(phase),
-      emojis: symptomsEmojiForPhase(phase),
+  CycleDayInfo dayInfo(DateTime date) {
+    final d = _atMidnight(date);
+    return CycleDayInfo(
+      date: d,
+      cycleDay: cycleDayFor(d),
+      phase: phaseFor(d),
+      marker: markerFor(d),
+      pregnancyChance: pregnancyChanceFor(d),
     );
   }
 
-  // ---------- PHASE RESOLUTION ----------
+  /// Fraction (0–1) of the way through the current cycle, for progress rings.
+  double get cycleProgress => (currentCycleDay - 1) / cycleLength;
 
-  CyclePhaseType _resolvePhase(DateTime date) {
-    final day = _cycleDayNumber(date);
+  // ---- Predictions & confidence ------------------------------------------
 
-    final ovulationDay = cycleLength - CycleDefaults.lutealPhaseLength;
-
-    final fertileStart = max(periodLength + 1, ovulationDay - 4);
-
-    final fertileEnd = min(cycleLength, ovulationDay + 1);
-
-    if (day <= periodLength) {
-      return CyclePhaseType.menstrual;
-    } else if (day < fertileStart) {
-      return CyclePhaseType.follicular;
-    } else if (day <= fertileEnd) {
-      return CyclePhaseType.fertile;
-    } else {
-      return CyclePhaseType.luteal;
-    }
+  /// Average cycle length across history (falls back to the configured value).
+  double get averageCycleLength {
+    if (history.isEmpty) return cycleLength.toDouble();
+    final total = history.fold<int>(0, (s, c) => s + c.cycleLength);
+    return total / history.length;
   }
 
-  // ---------- PHASE DURATIONS ----------
-
-  List<int> getPhaseDurations() {
-    final ovulationDay = cycleLength - CycleDefaults.lutealPhaseLength;
-
-    final menstrual = periodLength;
-
-    final fertileStart = max(periodLength + 1, ovulationDay - 4);
-
-    final fertileEnd = min(cycleLength, ovulationDay + 1);
-
-    final follicular = max(0, fertileStart - menstrual - 1);
-
-    final fertile = max(0, fertileEnd - fertileStart + 1);
-
-    final luteal = max(0, cycleLength - fertileEnd);
-
-    return [menstrual, follicular, fertile, luteal];
+  /// A 0–100 confidence score based on how regular past cycles have been.
+  int get regularityScore {
+    if (history.length < 2) return 80; // optimistic default with little data
+    final mean = averageCycleLength;
+    final variance = history
+            .map((c) => pow(c.cycleLength - mean, 2).toDouble())
+            .reduce((a, b) => a + b) /
+        history.length;
+    final stdDev = sqrt(variance);
+    // 0 deviation => 100; ~7 days deviation => ~0
+    return (100 - (stdDev / 7 * 100)).clamp(0, 100).round();
   }
 
-  // ---------- SYMPTOMS & SELF CARE ----------
+  int get shortestCycle => history.isEmpty
+      ? cycleLength
+      : history.map((c) => c.cycleLength).reduce(min);
+  int get longestCycle => history.isEmpty
+      ? cycleLength
+      : history.map((c) => c.cycleLength).reduce(max);
 
-  List<String> _symptomsForPhase(CyclePhaseType phase) {
-    switch (phase) {
-      case CyclePhaseType.menstrual:
-        return ["Cramps", "Fatigue", "Low mood"];
-      case CyclePhaseType.follicular:
-        return ["Rising energy", "Mental clarity"];
-      case CyclePhaseType.fertile:
-        return ["High libido", "Confidence", "Egg-white discharge"];
-      case CyclePhaseType.luteal:
-        return ["Bloating", "Mood swings", "Cravings"];
-    }
+  double get averagePeriodLength {
+    if (history.isEmpty) return periodLength.toDouble();
+    final total = history.fold<int>(0, (s, c) => s + c.periodLength);
+    return total / history.length;
   }
 
-  List<String> symptomsEmojiForPhase(CyclePhaseType phase) {
-    switch (phase) {
-      case CyclePhaseType.menstrual:
-        return ["🤕", "😴", "😔"];
-      case CyclePhaseType.follicular:
-        return ["⚡", "💡"];
-      case CyclePhaseType.fertile:
-        return ["💕", "✨", "💧"];
-      case CyclePhaseType.luteal:
-        return ["🎈", "🎭", "🍫"];
-    }
-  }
-
-  List<String> _selfCareForPhase(CyclePhaseType phase) {
-    switch (phase) {
-      case CyclePhaseType.menstrual:
-        return [
-          "Rest more and allow your body time to recover.",
-          "Eat warm, comforting foods to ease discomfort.",
-          "Practice gentle stretching to relieve tension.",
-          "Include iron-rich meals to support your energy.",
-        ];
-      case CyclePhaseType.follicular:
-        return [
-          "Start new projects while your energy is rising.",
-          "Try light workouts to build momentum.",
-          "Eat fresh, nourishing foods to fuel your body.",
-        ];
-      case CyclePhaseType.fertile:
-        return [
-          "Join in social activities while you feel confident.",
-          "Stay well hydrated throughout the day.",
-          "Eat balanced meals to support your body.",
-        ];
-      case CyclePhaseType.luteal:
-        return [
-          "Stick to a steady routine to feel grounded.",
-          "Reduce caffeine to help with sleep and mood.",
-          "Aim to go to bed earlier when you can.",
-          "Be kind to yourself and take things gently.",
-        ];
-    }
+  /// Predicted start dates of the next [count] periods.
+  List<DateTime> upcomingPeriods({int count = 3}) {
+    return List.generate(
+      count,
+      (i) => currentCycleStart.add(Duration(days: cycleLength * (i + 1))),
+    );
   }
 }

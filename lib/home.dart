@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:pp_tracker/components/navbar.dart';
-import 'package:pp_tracker/pages/calendar.dart';
-import 'package:pp_tracker/pages/landing_page.dart';
-import 'package:pp_tracker/pages/blog_page.dart';
+import 'package:pp_tracker/components/app_nav_bar.dart';
+import 'package:pp_tracker/pages/calendar_screen.dart';
+import 'package:pp_tracker/pages/home_screen.dart';
+import 'package:pp_tracker/pages/profile_screen.dart';
+import 'package:pp_tracker/pages/blog/blog_hub_screen.dart';
+import 'package:pp_tracker/theme/app_theme.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -12,35 +14,41 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  int index = 0;
+  int _index = 0;
+
+  static const _pages = [
+    HomeScreen(),
+    CalendarScreen(),
+    BlogHubScreen(),
+    ProfileScreen(),
+  ];
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color.fromARGB(255, 255, 228, 244), Color.fromARGB(255, 254, 249, 223)],
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      extendBody: true,
+      body: AnimatedSwitcher(
+        duration: AppDuration.normal,
+        switchInCurve: Curves.easeOut,
+        transitionBuilder: (child, animation) => FadeTransition(
+          opacity: animation,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, 0.02),
+              end: Offset.zero,
+            ).animate(animation),
+            child: child,
+          ),
+        ),
+        child: KeyedSubtree(
+          key: ValueKey(_index),
+          child: _pages[_index],
         ),
       ),
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        bottomNavigationBar: Navbar(
-          activeIndex: index,
-          onTap: (value) => setState(() {
-            index = value;
-          }),
-        ),
-        body: IndexedStack(
-          index: index,
-          children: const [
-            LandingPage(),
-            CalendarPage(),
-            BlogPage(), // Replaced placeholder with the new Health Blog page
-            Center(child: Text('Settings Page')),
-          ],
-        ),
+      bottomNavigationBar: AppNavBar(
+        activeIndex: _index,
+        onTap: (i) => setState(() => _index = i),
       ),
     );
   }
