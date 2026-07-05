@@ -12,8 +12,14 @@ class NavDestination {
 class AppNavBar extends StatelessWidget {
   final int activeIndex;
   final ValueChanged<int> onTap;
+  final List<GlobalKey>? keys;
 
-  const AppNavBar({super.key, required this.activeIndex, required this.onTap});
+  const AppNavBar({
+    super.key,
+    required this.activeIndex,
+    required this.onTap,
+    this.keys,
+  });
 
   static const _destinations = [
     NavDestination(Icons.spa_outlined, Icons.spa_rounded, 'Today'),
@@ -43,6 +49,7 @@ class AppNavBar extends StatelessWidget {
           final active = i == activeIndex;
           return Expanded(
             child: GestureDetector(
+              key: keys != null && keys!.length > i ? keys![i] : null,
               behavior: HitTestBehavior.opaque,
               onTap: () => onTap(i),
               child: AnimatedContainer(

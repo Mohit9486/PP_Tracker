@@ -1,6 +1,7 @@
 import 'package:pp_tracker/models/blog/app_user.dart';
 import 'package:pp_tracker/models/blog/blog.dart';
 import 'package:pp_tracker/models/blog/blog_category.dart';
+import 'package:pp_tracker/models/blog/blog_models.dart';
 import 'package:pp_tracker/models/blog/comment.dart';
 
 /// How a feed query should be ordered.
@@ -110,6 +111,9 @@ abstract class BlogRepository {
 
   // ---- Authoring (drafts / publishing) ----------------------------------
   Future<Blog> upsertBlog(Blog blog);
+
+  // ---- Moderation -------------------------------------------------------
+  Future<void> reportBlog(BlogReport report);
 
   // ---- Comments ---------------------------------------------------------
   Future<Page<Comment>> fetchComments(

@@ -6,6 +6,7 @@ import 'package:pp_tracker/components/blog/blog_category_style.dart';
 import 'package:pp_tracker/components/blog/blog_cover.dart';
 import 'package:pp_tracker/components/blog/comment_section.dart';
 import 'package:pp_tracker/models/blog/blog.dart';
+import 'package:pp_tracker/models/blog/blog_models.dart';
 import 'package:pp_tracker/state/blog_controller.dart';
 import 'package:pp_tracker/theme/app_theme.dart';
 
@@ -140,9 +141,14 @@ class _BlogDetailScreenState extends State<BlogDetailScreen> {
                       const SizedBox(height: AppSpacing.md),
                       _authorRow(),
                       const Divider(height: AppSpacing.xl, color: AppColors.divider),
-                      _ArticleBody(content: _blog.content),
+                      if (_blog.sections.isNotEmpty)
+                        ..._blog.sections.map((section) => _SectionView(section: section))
+                      else
+                        _ArticleBody(content: _blog.content),
                       const SizedBox(height: AppSpacing.lg),
                       _tags(),
+                      if (_blog.globalReferences.isNotEmpty || _blog.lastVerifiedAt != null)
+                        _ReferencesSection(blog: _blog),
                       const SizedBox(height: AppSpacing.lg),
                       _relatedSection(category),
                       const Divider(height: AppSpacing.xxl, color: AppColors.divider),
@@ -326,6 +332,82 @@ class _BlogDetailScreenState extends State<BlogDetailScreen> {
   }
 }
 
+class _SectionView extends StatelessWidget {
+  final BlogSection section;
+  const _SectionView({required this.section});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (section.title != null) ...[
+          const SizedBox(height: AppSpacing.md),
+          Text(section.title!, style: AppText.h2),
+          const SizedBox(height: AppSpacing.xs),
+        ],
+        _ArticleBody(content: section.body),
+        if (section.sectionReferences.isNotEmpty) ...[
+          const SizedBox(height: AppSpacing.xs),
+          ...section.sectionReferences.map((r) => Text(
+                'Source: ${r.source} (${r.publishedYear ?? ""})',
+                style: AppText.caption.copyWith(fontStyle: FontStyle.italic),
+              )),
+        ],
+        const SizedBox(height: AppSpacing.md),
+      ],
+    );
+  }
+}
+
+class _ReferencesSection extends StatelessWidget {
+  final Blog blog;
+  const _ReferencesSection({required this.blog});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(top: AppSpacing.lg),
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceAlt,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.verified_user_rounded, size: 18, color: AppColors.primary),
+              const SizedBox(width: 8),
+              Text('Medical Verification', style: AppText.bodyStrong),
+            ],
+          ),
+          if (blog.lastVerifiedAt != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Last verified on ${DateFormat.yMMMMd().format(blog.lastVerifiedAt!)}',
+              style: AppText.caption,
+            ),
+          ],
+          if (blog.globalReferences.isNotEmpty) ...[
+            const Divider(height: AppSpacing.lg),
+            Text('References', style: AppText.label),
+            const SizedBox(height: 8),
+            ...blog.globalReferences.map((r) => Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Text(
+                    '• ${r.title}. ${r.source} (${r.publishedYear ?? "N/A"}).',
+                    style: AppText.caption,
+                  ),
+                )),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class _CategoryPill extends StatelessWidget {
   final String label;
   final Color color;
@@ -347,7 +429,7 @@ class _CategoryPill extends StatelessWidget {
 }
 
 /// Lightweight renderer for the article's markdown-ish body (## headings,
-/// "- " bullets and paragraphs). Avoids a markdown dependency for this scope.
+/// "- " bullets, "**" bold, and paragraphs).
 class _ArticleBody extends StatelessWidget {
   final String content;
   const _ArticleBody({required this.content});
@@ -379,22 +461,36 @@ class _ArticleBody extends StatelessWidget {
                     color: AppColors.primary, shape: BoxShape.circle),
               ),
               Expanded(
-                child: Text(line.substring(2),
-                    style: AppText.body.copyWith(
-                        color: AppColors.textPrimary, fontSize: 16, height: 1.6)),
+                child: _richText(line.substring(2)),
               ),
             ],
           ),
         ));
       } else {
-        widgets.add(Text(
-          line,
-          style: AppText.body
-              .copyWith(color: AppColors.textPrimary, fontSize: 16, height: 1.7),
-        ));
+        widgets.add(_richText(line));
       }
     }
     return Column(
         crossAxisAlignment: CrossAxisAlignment.start, children: widgets);
+  }
+
+  Widget _richText(String text) {
+    final spans = <TextSpan>[];
+    final parts = text.split('**');
+    for (int i = 0; i < parts.length; i++) {
+      if (i % 2 == 1) {
+        spans.add(TextSpan(
+          text: parts[i],
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ));
+      } else {
+        spans.add(TextSpan(text: parts[i]));
+      }
+    }
+    return Text.rich(
+      TextSpan(children: spans),
+      style: AppText.body.copyWith(
+          color: AppColors.textPrimary, fontSize: 16, height: 1.7),
+    );
   }
 }

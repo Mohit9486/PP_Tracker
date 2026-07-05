@@ -4,6 +4,7 @@ import 'package:pp_tracker/components/app_card.dart';
 import 'package:pp_tracker/components/blog/article_cards.dart';
 import 'package:pp_tracker/components/blog/blog_category_style.dart';
 import 'package:pp_tracker/models/blog/blog.dart';
+import 'package:pp_tracker/pages/blog/blog_create_screen.dart';
 import 'package:pp_tracker/pages/blog/blog_detail_screen.dart';
 import 'package:pp_tracker/pages/blog/bookmarks_screen.dart';
 import 'package:pp_tracker/repositories/blog_repository.dart';
@@ -27,7 +28,9 @@ class _BlogHubScreenState extends State<BlogHubScreen> {
     super.initState();
     final controller = context.read<BlogController>();
     if (controller.status == LoadStatus.initial) {
-      controller.load();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        controller.load();
+      });
     }
     _scroll.addListener(() {
       if (_scroll.position.pixels >=
@@ -110,6 +113,15 @@ class _BlogHubScreenState extends State<BlogHubScreen> {
                 ],
               ),
             ),
+            _circleButton(
+              icon: Icons.add_rounded,
+              onTap: () {
+                // Future: Check auth and roles here
+                Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => const BlogCreateScreen()));
+              },
+            ),
+            const SizedBox(width: AppSpacing.sm),
             _circleButton(
               icon: Icons.bookmark_border_rounded,
               onTap: () {

@@ -1,0 +1,23 @@
+# Tasks
+
+- [x] Research existing blog implementation
+- [x] Create implementation plan
+- [/] Refactor Blog Models
+    - [ ] Create `blog_models.dart` (Author, Reference, Section, Report)
+    - [ ] Update `blog.dart` with structured content support
+    - [ ] Update `app_user.dart` for extensibility
+- [ ] Overhaul Repositories
+    - [ ] Update `blog_repository.dart` interface
+    - [ ] Overhaul `mock_blog_repository.dart` with high-quality content
+- [ ] Update State Management
+    - [ ] Update `blog_controller.dart` for creation and reporting
+- [ ] UI/UX Improvements
+    - [ ] Refactor `blog_detail_screen.dart` for structured rendering
+    - [ ] Implement `blog_create_screen.dart`
+    - [ ] Polish typography and spacing
+- [ ] Onboarding & Help System
+    - [ ] Create onboarding models and controller
+    - [ ] Implement `onboarding_screen.dart`
+- [ ] Verification & Final Polish
+    - [ ] Run automated tests
+    - [ ] Manual walkthrough on emulator

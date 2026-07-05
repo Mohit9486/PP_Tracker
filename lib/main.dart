@@ -6,6 +6,8 @@ import 'package:pp_tracker/models/user_model.dart';
 import 'package:pp_tracker/repositories/blog_repository.dart';
 import 'package:pp_tracker/repositories/mock_blog_repository.dart';
 import 'package:pp_tracker/state/blog_controller.dart';
+import 'package:pp_tracker/state/onboarding_controller.dart';
+import 'package:pp_tracker/pages/onboarding/onboarding_screen.dart';
 import 'package:pp_tracker/theme/app_theme.dart';
 
 void main() {
@@ -32,16 +34,21 @@ class PetalApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => UserModel()),
+        ChangeNotifierProvider(create: (_) => OnboardingController()),
         ChangeNotifierProvider(
           create: (_) =>
               BlogController(blogRepository, currentUser: currentUser),
         ),
       ],
-      child: MaterialApp(
-        title: 'Petal — Cycle & Wellness',
-        debugShowCheckedModeBanner: false,
-        theme: AppTheme.light,
-        home: const HomePage(),
+      child: Consumer<OnboardingController>(
+        builder: (context, onboarding, _) {
+          return MaterialApp(
+            title: 'Petal — Cycle & Wellness',
+            debugShowCheckedModeBanner: false,
+            theme: AppTheme.light,
+            home: onboarding.isCompleted ? const HomePage() : const OnboardingScreen(),
+          );
+        },
       ),
     );
   }

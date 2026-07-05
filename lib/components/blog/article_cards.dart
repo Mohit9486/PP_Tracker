@@ -148,9 +148,20 @@ class FeaturedArticleCard extends StatelessWidget {
                       style: AppText.h2.copyWith(color: Colors.white),
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      'By ${blog.authorName}',
-                      style: AppText.caption.copyWith(color: Colors.white.withValues(alpha: 0.85)),
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            'By ${blog.authorName}',
+                            style: AppText.caption.copyWith(color: Colors.white.withValues(alpha: 0.85)),
+                          ),
+                        ),
+                        if (blog.authorIsExpert) ...[
+                          const SizedBox(width: 4),
+                          const Icon(Icons.verified_rounded,
+                              size: 14, color: Colors.white),
+                        ],
+                      ],
                     ),
                     const SizedBox(height: AppSpacing.xs),
                     _MetaRow(blog: blog, color: Colors.white.withValues(alpha: 0.85)),
@@ -203,7 +214,7 @@ class ArticleListCard extends StatelessWidget {
                     _Tag(label: category.name, color: AppColors.alpha(category.color, 0.14), textColor: category.color),
                     const Spacer(),
                     if (blog.authorIsExpert)
-                      const Icon(Icons.verified_rounded,
+                      const Icon(Icons.verified_user_rounded,
                           size: 15, color: AppColors.primary),
                   ],
                 ),

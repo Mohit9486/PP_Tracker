@@ -1,10 +1,13 @@
-/// Visibility / lifecycle state of an article. Maps cleanly to a Firestore
-/// enum field and lets us support drafts and archiving without separate tables.
+import 'package:pp_tracker/models/blog/blog_models.dart';
+
+/// Visibility / lifecycle state of an article.
 enum BlogVisibility {
   draft, // not yet published; visible only to its author
+  pendingReview, // awaiting AI/human verification
   public, // live and listed
   hidden, // unlisted but reachable by direct link
-  archived; // retired from feeds
+  archived, // retired from feeds
+  rejected; // failed moderation/verification
 
   bool get isPublic => this == BlogVisibility.public;
 
@@ -15,22 +18,22 @@ enum BlogVisibility {
       );
 }
 
-/// A wellness article.
-///
-/// Pure Dart + `toMap`/`fromMap` so swapping the mock repository for Firestore
-/// is a serialization detail, not a model rewrite. Author display fields are
-/// denormalized (Firestore-style) so feed cards render without extra reads;
-/// per-user flags ([isBookmarked]/[isLikedByMe]) are view-state the repository
-/// populates for the current user and are never persisted on the document.
+/// A professional health & wellness article.
 class Blog {
   final String id;
   final String title;
   final String subtitle;
   final String summary;
-  final String content;
+  
+  /// Structured content for better UI rendering and section-level references.
+  final List<BlogSection> sections;
+  
+  /// Global references that apply to the entire article.
+  final List<BlogReference> globalReferences;
+
   final String? coverImageUrl;
 
-  // Author (denormalized for cheap reads; source of truth is the users collection)
+  // Author details (denormalized)
   final String authorId;
   final String authorName;
   final String? authorAvatarUrl;
@@ -42,19 +45,19 @@ class Blog {
   final int readingTimeMinutes;
   final DateTime publishedAt;
   final DateTime updatedAt;
+  final DateTime? lastVerifiedAt;
 
   final bool isFeatured;
   final BlogVisibility visibility;
 
-  // Aggregate counters (denormalized; incremented server-side later)
+  // Aggregate counters
   final int likeCount;
   final int commentCount;
   final int viewCount;
 
-  /// Forward-compatible bag for analytics / experimental backend fields.
   final Map<String, dynamic> metadata;
 
-  // ---- Transient per-user view state (not serialized to the document) ----
+  // Transient view state
   final bool isBookmarked;
   final bool isLikedByMe;
 
@@ -63,7 +66,8 @@ class Blog {
     required this.title,
     this.subtitle = '',
     this.summary = '',
-    required this.content,
+    this.sections = const [],
+    this.globalReferences = const [],
     this.coverImageUrl,
     required this.authorId,
     required this.authorName,
@@ -74,6 +78,7 @@ class Blog {
     this.readingTimeMinutes = 1,
     required this.publishedAt,
     required this.updatedAt,
+    this.lastVerifiedAt,
     this.isFeatured = false,
     this.visibility = BlogVisibility.public,
     this.likeCount = 0,
@@ -86,7 +91,9 @@ class Blog {
 
   bool get isDraft => visibility == BlogVisibility.draft;
 
-  /// Simple popularity heuristic used to rank trending content.
+  /// Joins section bodies for simple text searches or fallback rendering.
+  String get content => sections.map((s) => s.body).join('\n\n');
+
   double get engagementScore =>
       likeCount * 2.0 + commentCount * 3.0 + viewCount * 0.4;
 
@@ -94,7 +101,8 @@ class Blog {
     String? title,
     String? subtitle,
     String? summary,
-    String? content,
+    List<BlogSection>? sections,
+    List<BlogReference>? globalReferences,
     String? coverImageUrl,
     String? authorName,
     String? authorAvatarUrl,
@@ -103,6 +111,7 @@ class Blog {
     List<String>? tags,
     int? readingTimeMinutes,
     DateTime? updatedAt,
+    DateTime? lastVerifiedAt,
     bool? isFeatured,
     BlogVisibility? visibility,
     int? likeCount,
@@ -117,7 +126,8 @@ class Blog {
       title: title ?? this.title,
       subtitle: subtitle ?? this.subtitle,
       summary: summary ?? this.summary,
-      content: content ?? this.content,
+      sections: sections ?? this.sections,
+      globalReferences: globalReferences ?? this.globalReferences,
       coverImageUrl: coverImageUrl ?? this.coverImageUrl,
       authorId: authorId,
       authorName: authorName ?? this.authorName,
@@ -128,6 +138,7 @@ class Blog {
       readingTimeMinutes: readingTimeMinutes ?? this.readingTimeMinutes,
       publishedAt: publishedAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      lastVerifiedAt: lastVerifiedAt ?? this.lastVerifiedAt,
       isFeatured: isFeatured ?? this.isFeatured,
       visibility: visibility ?? this.visibility,
       likeCount: likeCount ?? this.likeCount,
@@ -139,13 +150,13 @@ class Blog {
     );
   }
 
-  /// Persisted document shape. Transient view-state is intentionally excluded.
   Map<String, dynamic> toMap() => {
         'id': id,
         'title': title,
         'subtitle': subtitle,
         'summary': summary,
-        'content': content,
+        'sections': sections.map((s) => s.toMap()).toList(),
+        'globalReferences': globalReferences.map((r) => r.toMap()).toList(),
         'coverImageUrl': coverImageUrl,
         'authorId': authorId,
         'authorName': authorName,
@@ -156,6 +167,7 @@ class Blog {
         'readingTimeMinutes': readingTimeMinutes,
         'publishedAt': publishedAt.toIso8601String(),
         'updatedAt': updatedAt.toIso8601String(),
+        'lastVerifiedAt': lastVerifiedAt?.toIso8601String(),
         'isFeatured': isFeatured,
         'visibility': visibility.name,
         'likeCount': likeCount,
@@ -169,7 +181,14 @@ class Blog {
         title: map['title'] as String? ?? '',
         subtitle: map['subtitle'] as String? ?? '',
         summary: map['summary'] as String? ?? '',
-        content: map['content'] as String? ?? '',
+        sections: (map['sections'] as List?)
+                ?.map((s) => BlogSection.fromMap(s as Map<String, dynamic>))
+                .toList() ??
+            const [],
+        globalReferences: (map['globalReferences'] as List?)
+                ?.map((r) => BlogReference.fromMap(r as Map<String, dynamic>))
+                .toList() ??
+            const [],
         coverImageUrl: map['coverImageUrl'] as String?,
         authorId: map['authorId'] as String? ?? '',
         authorName: map['authorName'] as String? ?? 'Unknown',
@@ -182,6 +201,7 @@ class Blog {
             DateTime.fromMillisecondsSinceEpoch(0),
         updatedAt: DateTime.tryParse(map['updatedAt'] as String? ?? '') ??
             DateTime.fromMillisecondsSinceEpoch(0),
+        lastVerifiedAt: DateTime.tryParse(map['lastVerifiedAt'] as String? ?? ''),
         isFeatured: map['isFeatured'] as bool? ?? false,
         visibility: BlogVisibility.fromName(map['visibility'] as String?),
         likeCount: map['likeCount'] as int? ?? 0,
